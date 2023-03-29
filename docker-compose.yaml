@@ -1,0 +1,106 @@
+version: '3.3'
+services:
+    # リバプロ
+    traefik:
+      image: traefik:latest
+      container_name: "traefik"
+      ports:
+        - "80:80"
+        - "18000:8080"
+      volumes:
+        - "/var/run/docker.sock:/var/run/docker.sock:ro"
+        - ./src/traefik/traefik.yml:/etc/traefik/traefik.yml
+
+    nginx_a:
+      image: nginx
+      container_name: nginx_a
+      hostname: nginx_a
+      volumes:
+        - ${PWD}/src/nginx/service-a.html:/usr/share/nginx/html/service-a.html
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.service-a.rule=PathPrefix(`/service-a`)"
+        - "traefik.http.routers.service-a.entrypoints=http"
+      depends_on:
+        - fluentd
+      logging:
+        driver: "fluentd"
+        options:
+          fluentd-address: localhost:24224
+          tag: nginx.a.access
+          # 起動時に接続を確立的無くても contaienr は起動する設定
+          fluentd-async-connect: "true"
+
+    nginx_b:
+      image: nginx
+      container_name: nginx_b
+      hostname: nginx_b
+      volumes:
+        - ${PWD}/src/nginx/service-b.html:/usr/share/nginx/html/service-b.html
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.service-b.rule=PathPrefix(`/service-b`)"
+        - "traefik.http.routers.service-b.entrypoints=http"
+      depends_on:
+        - fluentd
+      logging:
+        driver: "fluentd"
+        options:
+          fluentd-address: localhost:24224
+          tag: nginx.b.access
+          # 起動時に接続を確立的無くても contaienr は起動する設定
+          fluentd-async-connect: "true"
+
+
+    fluentd:
+      build: ./src/fluentd
+      container_name: fluentd
+      hostname: fluentd
+      restart: always
+      ports:
+        - "24224:24224"
+        - "24220:24220"
+        - "24224:24224/udp"
+      # depends_on:
+      #   - es
+      volumes:
+        #- ${PWD}/log:/fluentd/log
+        - ${PWD}/src/fluentd/fluent.conf:/fluentd/etc/fluent.conf:ro
+
+    # Elasticsearchコンテナ
+    elasticsearch:
+      image: docker.elastic.co/elasticsearch/elasticsearch:8.4.3
+      container_name: elasticsearch
+      hostname: elasticsearch
+      restart: always
+      environment:
+        - discovery.type="single-node"
+        - cluster.name="es-cluster"
+        - node.name="elasticsearch"
+        - bootstrap.memory_lock=true
+        - xpack.security.enabled=false
+        - TZ=Asia/Tokyo
+      ulimits:
+        memlock:
+          soft: -1
+          hard: -1
+      # volumes:
+      #   # データを永続化
+      #   - ${PWD}/data:/usr/share/elasticsearch/data
+      ports:
+        - 9200:9200
+
+    # Kibanaのコンテナ
+    kibana:
+      image: docker.elastic.co/kibana/kibana:8.4.3
+      container_name: kibana
+      hostname: kibana
+      ports:
+        - 5601:5601
+      environment:
+        - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+        - TZ=Asia/Tokyo
+        - I18N_LOCALE=ja-JP
+      depends_on:
+        - elasticsearch
+      restart: always
